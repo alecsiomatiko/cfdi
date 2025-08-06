@@ -3,6 +3,10 @@
  * Basado en la documentación oficial del SAT (Diciembre 2023, Versión 1.2)
  */
 
+import { readFile } from "fs/promises"
+import { createHash, createPrivateKey, createSign } from "crypto"
+import { DOMParser } from "@xmldom/xmldom"
+
 // Tipos para la autenticación
 interface TokenAutenticacion {
   token: string
@@ -59,25 +63,97 @@ export class SATDescargaMasiva {
   /**
    * Autentica con el SAT usando el certificado de e.firma
    * @returns Token de autenticación
-   */
+  */
   public async autenticar(): Promise<string> {
     try {
       console.log("Iniciando proceso de autenticación con el SAT...")
 
-      // Aquí iría la lógica para:
-      // 1. Leer el certificado y llave privada
-      // 2. Generar la petición SOAP con la estructura de autenticación
-      // 3. Enviar la petición al servicio de autenticación
-      // 4. Procesar la respuesta y extraer el token
+      // 1. Cargar certificados y llave privada
+      const [certificado, llavePrivada] = await Promise.all([
+        readFile(this.certificadoPath),
+        readFile(this.llavePrivadaPath),
+      ])
+      const certificadoBase64 = certificado.toString("base64")
 
-      // Simulación de respuesta exitosa
+      // Generar objeto llave privada usando la contraseña proporcionada
+      const privateKey = createPrivateKey({
+        key: llavePrivada,
+        format: "der",
+        type: "pkcs8",
+        passphrase: this.passwordLlave,
+      })
+
+      // 2. Construir el cuerpo del mensaje y su digest
+      const body =
+        '<Autentica xmlns="http://DescargaMasivaTerceros.sat.gob.mx" wsu:Id="_0" />'
+      const digest = createHash("sha1").update(body).digest("base64")
+
+      const signedInfo = `\
+<ds:SignedInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">\
+  <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>\
+  <ds:SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/>\
+  <ds:Reference URI="#_0">\
+    <ds:Transforms>\
+      <ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>\
+    </ds:Transforms>\
+    <ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/>\
+    <ds:DigestValue>${digest}</ds:DigestValue>\
+  </ds:Reference>\
+</ds:SignedInfo>`
+
+      // 3. Firmar la solicitud
+      const signer = createSign("RSA-SHA1")
+      signer.update(signedInfo)
+      const signatureValue = signer.sign(privateKey, "base64")
+
+      const soapRequest = `<?xml version="1.0" encoding="utf-8"?>\
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">\
+  <s:Header>\
+    <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">\
+      <wsse:BinarySecurityToken EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary" ValueType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-x509-token-profile-1.0#X509v3" wsu:Id="X509Token">${certificadoBase64}</wsse:BinarySecurityToken>\
+      <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">\
+        ${signedInfo}\
+        <ds:SignatureValue>${signatureValue}</ds:SignatureValue>\
+        <ds:KeyInfo>\
+          <wsse:SecurityTokenReference>\
+            <wsse:Reference URI="#X509Token" ValueType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-x509-token-profile-1.0#X509v3"/>\
+          </wsse:SecurityTokenReference>\
+        </ds:KeyInfo>\
+      </ds:Signature>\
+    </wsse:Security>\
+  </s:Header>\
+  <s:Body>${body}</s:Body>\
+</s:Envelope>`
+
+      // 4. Enviar petición al SAT
+      const respuesta = await fetch(this.URL_AUTENTICACION, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/xml; charset=utf-8",
+          SOAPAction:
+            "http://DescargaMasivaTerceros.sat.gob.mx/IAuthenticationService/Autentica",
+        },
+        body: soapRequest,
+      })
+
+      const respuestaTexto = await respuesta.text()
+
+      // Extraer token de la respuesta
+      const xml = new DOMParser().parseFromString(respuestaTexto, "text/xml")
+      const tokenNode = xml.getElementsByTagName("AutenticaResult")[0]
+      if (!tokenNode || !tokenNode.textContent) {
+        throw new Error("Token de autenticación no encontrado en la respuesta")
+      }
+      const token = tokenNode.textContent
+
+      // 5. Guardar token y vigencia
       this.tokenAutenticacion = {
-        token: "WRAP access_token=eyJhbGciOiJodHRwOi...",
-        vigencia: new Date(Date.now() + 5 * 60 * 1000), // Token válido por 5 minutos
+        token,
+        vigencia: new Date(Date.now() + 5 * 60 * 1000),
       }
 
       console.log("Autenticación exitosa")
-      return this.tokenAutenticacion.token
+      return token
     } catch (error) {
       console.error("Error en la autenticación:", error)
       throw new Error(`Error al autenticar con el SAT: ${error instanceof Error ? error.message : String(error)}`)
