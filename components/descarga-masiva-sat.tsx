@@ -44,6 +44,7 @@ export function DescargaMasivaSAT() {
   const [solicitudSeleccionada, setSolicitudSeleccionada] = useState<SolicitudDescarga | null>(null)
   const [verificando, setVerificando] = useState(false)
   const [descargando, setDescargando] = useState(false)
+  const rfcUsuario = "GOGR810728TV5" // RFC del usuario actual
 
   // Función para crear una nueva solicitud
   const handleCrearSolicitud = async () => {
@@ -62,18 +63,37 @@ export function DescargaMasivaSAT() {
     setSuccess(null)
 
     try {
-      // Aquí se llamaría a la API para crear la solicitud
-      // const idSolicitud = await crearSolicitud(...)
+      const response = await fetch("/api/sat-descarga", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          accion: "crearSolicitud",
+          fechaInicial: format(startDate, "yyyy-MM-dd"),
+          fechaFinal: format(endDate, "yyyy-MM-dd"),
+          tipoSolicitud,
+          rfcEmisor: rfcEmisor || undefined,
+          certificadoPath,
+          llavePrivadaPath,
+          passwordLlave,
+          rfc: rfcUsuario,
+        }),
+      })
 
-      // Simulación de respuesta exitosa
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error || "Error al crear la solicitud")
+      }
+
       const nuevaSolicitud: SolicitudDescarga = {
-        id: `${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        id: data.idSolicitud,
         fechaSolicitud: new Date(),
         tipoSolicitud,
         fechaInicial: format(startDate, "yyyy-MM-dd"),
         fechaFinal: format(endDate, "yyyy-MM-dd"),
         rfcEmisor: rfcEmisor || undefined,
-        rfcReceptor: "GOGR810728TV5", // RFC del usuario actual
+        rfcReceptor: rfcUsuario,
         estatus: EstadoSolicitud.Aceptada,
         mensaje: "Solicitud Aceptada",
         paquetes: [],
@@ -95,23 +115,32 @@ export function DescargaMasivaSAT() {
     setError(null)
 
     try {
-      // Aquí se llamaría a la API para verificar la solicitud
-      // const solicitudActualizada = await verificarSolicitud(solicitud.id)
+      const response = await fetch("/api/sat-descarga", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accion: "verificarSolicitud",
+          idSolicitud: solicitud.id,
+          certificadoPath,
+          llavePrivadaPath,
+          passwordLlave,
+          rfc: rfcUsuario,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error || "Error al verificar la solicitud")
+      }
 
-      // Simulación de respuesta exitosa
-      setTimeout(() => {
-        const solicitudActualizada: SolicitudDescarga = {
-          ...solicitud,
-          estatus: EstadoSolicitud.Terminada,
-          mensaje: "Solicitud Terminada",
-          paquetes: [`${solicitud.id}_01`, `${solicitud.id}_02`, `${solicitud.id}_03`],
-        }
+      const solicitudActualizada: SolicitudDescarga = {
+        ...data,
+        fechaSolicitud: new Date(data.fechaSolicitud),
+      }
 
-        setSolicitudes(solicitudes.map((s) => (s.id === solicitud.id ? solicitudActualizada : s)))
-        setSolicitudSeleccionada(solicitudActualizada)
-        setSuccess(`Solicitud verificada correctamente`)
-        setVerificando(false)
-      }, 1500)
+      setSolicitudes(solicitudes.map((s) => (s.id === solicitud.id ? solicitudActualizada : s)))
+      setSolicitudSeleccionada(solicitudActualizada)
+      setSuccess(`Solicitud verificada correctamente`)
+      setVerificando(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al verificar la solicitud")
       setVerificando(false)
@@ -124,14 +153,36 @@ export function DescargaMasivaSAT() {
     setError(null)
 
     try {
-      // Aquí se llamaría a la API para descargar el paquete
-      // const contenido = await descargarPaquete(idPaquete)
+      const response = await fetch("/api/sat-descarga", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accion: "descargarPaquete",
+          idPaquete,
+          certificadoPath,
+          llavePrivadaPath,
+          passwordLlave,
+          rfc: rfcUsuario,
+        }),
+      })
 
-      // Simulación de descarga exitosa
-      setTimeout(() => {
-        setSuccess(`Paquete ${idPaquete} descargado correctamente`)
-        setDescargando(false)
-      }, 2000)
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || "Error al descargar el paquete")
+      }
+
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `${idPaquete}.zip`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+
+      setSuccess(`Paquete ${idPaquete} descargado correctamente`)
+      setDescargando(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al descargar el paquete")
       setDescargando(false)
