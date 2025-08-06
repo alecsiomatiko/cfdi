@@ -7,9 +7,10 @@ import { processCFDI } from "@/lib/cfdi-processor"
 /**
  * Procesa un archivo ZIP descargado del SAT
  * @param zipBuffer Buffer con el contenido del archivo ZIP
+ * @param rfcReceptor RFC del receptor (usuario)
  * @returns Array con los datos procesados de los CFDI
  */
-export async function processSATZipFile(zipBuffer: Buffer): Promise<any[]> {
+export async function processSATZipFile(zipBuffer: Buffer, rfcReceptor: string): Promise<any[]> {
   try {
     // Crear un objeto AdmZip con el buffer del archivo
     const zip = new AdmZip(zipBuffer)
@@ -29,7 +30,7 @@ export async function processSATZipFile(zipBuffer: Buffer): Promise<any[]> {
         const xmlDoc = parser.parseFromString(xmlContent, "text/xml")
 
         // Procesar el CFDI
-        const cfdiData = processCFDI(xmlDoc)
+        const cfdiData = processCFDI(xmlDoc, rfcReceptor)
         if (cfdiData) {
           results.push(cfdiData)
         }

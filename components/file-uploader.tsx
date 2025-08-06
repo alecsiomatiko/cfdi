@@ -16,6 +16,8 @@ import { Badge } from "@/components/ui/badge"
 import { ExportColumnsDialog } from "@/components/export-columns-dialog"
 import { useToast } from "@/hooks/use-toast"
 
+const USER_RFC = process.env.NEXT_PUBLIC_RFC || ""
+
 // Crear contexto para compartir datos procesados
 export const ProcessedDataContext = createContext<{
   processedData: any[]
@@ -128,7 +130,7 @@ export function FileUploader() {
     setShowTable(false)
 
     try {
-      const data = await processFiles(files, (currentProgress) => {
+      const data = await processFiles(files, USER_RFC, (currentProgress) => {
         setProgress(currentProgress)
       })
 

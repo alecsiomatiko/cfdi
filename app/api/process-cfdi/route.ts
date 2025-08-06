@@ -6,6 +6,7 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
     const files = formData.getAll("files") as File[]
+    const rfc = (formData.get("rfc") as string | null) || ""
 
     if (!files || files.length === 0) {
       return NextResponse.json({ message: "No se proporcionaron archivos" }, { status: 400 })
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Procesar el documento XML
-        const cfdiData = processCFDI(xmlDoc)
+        const cfdiData = processCFDI(xmlDoc, rfc)
         if (cfdiData) {
           results.push(cfdiData)
           logs.push(`Archivo ${file.name} procesado correctamente como ${cfdiData.TIPO_DOCUMENTO}`)
