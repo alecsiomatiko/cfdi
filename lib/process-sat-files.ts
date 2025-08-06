@@ -1,6 +1,6 @@
 import * as fs from "fs"
 import * as path from "path"
-import * as AdmZip from "adm-zip"
+import AdmZip from "adm-zip"
 import { DOMParser } from "@xmldom/xmldom"
 import { processCFDI } from "@/lib/cfdi-processor"
 
