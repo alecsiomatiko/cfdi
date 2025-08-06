@@ -3,6 +3,10 @@
  * Basado en la documentación oficial del SAT (Diciembre 2023, Versión 1.2)
  */
 
+import * as fs from "fs"
+import * as crypto from "crypto"
+import { DOMParser } from "@xmldom/xmldom"
+
 // Tipos para la autenticación
 interface TokenAutenticacion {
   token: string
@@ -134,22 +138,63 @@ export class SATDescargaMasiva {
    */
   public async descargarPaquete(idPaquete: string): Promise<Buffer> {
     try {
-      // Verificar si tenemos un token válido
+      // 1. Renovar token si es necesario
       if (!this.tokenAutenticacion || this.tokenAutenticacion.vigencia < new Date()) {
         await this.autenticar()
       }
 
       console.log(`Descargando paquete: ${idPaquete}`)
 
-      // Aquí iría la lógica para:
-      // 1. Generar la petición SOAP para descargar el paquete
-      // 2. Incluir el token de autenticación en el header
-      // 3. Firmar la petición con la e.firma
-      // 4. Enviar la petición al servicio de descarga
-      // 5. Procesar la respuesta y extraer el contenido del paquete
+      // Leer certificado y llave privada
+      const certificado = fs.readFileSync(this.certificadoPath)
+      const llavePrivada = fs.readFileSync(this.llavePrivadaPath)
 
-      // Simulación de respuesta exitosa (buffer vacío)
-      return Buffer.from([])
+      // Datos para la cabecera de seguridad
+      const certificadoB64 = certificado.toString("base64")
+      const created = new Date().toISOString()
+      const expires = new Date(Date.now() + 5 * 60 * 1000).toISOString()
+
+      // Generar cuerpo de la petición
+      const body = `<s:Body><ns2:DownloadPackageRequest xmlns:ns2="http://DescargaMasivaTerceros.sat.gob.mx" Id="Body"><ns2:IdPaquete>${idPaquete}</ns2:IdPaquete></ns2:DownloadPackageRequest></s:Body>`
+
+      // Calcular digest y firma XML
+      const digest = crypto.createHash("sha256").update(body).digest("base64")
+      const signedInfo = `<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/><SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><Reference URI="#Body"><Transforms><Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><DigestValue>${digest}</DigestValue></Reference></SignedInfo>`
+      const signer = crypto.createSign("RSA-SHA256")
+      signer.update(signedInfo)
+      const signatureValue = signer.sign({ key: llavePrivada, passphrase: this.passwordLlave }, "base64")
+
+      // Construir cabecera de seguridad con X.509 y firma
+      const securityHeader = `<o:Security s:mustUnderstand="1" xmlns:o="http://schemas.xmlsoap.org/ws/2003/06/secext" xmlns:u="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"><u:Timestamp u:Id="_0"><u:Created>${created}</u:Created><u:Expires>${expires}</u:Expires></u:Timestamp><o:BinarySecurityToken u:Id="X509-1" ValueType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-x509-token-profile-1.0#X509v3" EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">${certificadoB64}</o:BinarySecurityToken><Signature xmlns="http://www.w3.org/2000/09/xmldsig#">${signedInfo}<SignatureValue>${signatureValue}</SignatureValue><KeyInfo><o:SecurityTokenReference><o:Reference URI="#X509-1" ValueType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-x509-token-profile-1.0#X509v3"/></o:SecurityTokenReference></KeyInfo></Signature></o:Security>`
+
+      // Construir el sobre SOAP completo
+      const soapEnvelope = `<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">${securityHeader}${body}</s:Envelope>`
+
+      // 2. Enviar petición a URL_DESCARGA
+      const response = await fetch(this.URL_DESCARGA, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/xml; charset=utf-8",
+          SOAPAction: "\"http://DescargaMasivaTerceros.sat.gob.mx/DescargaMasivaService/Descargar\"",
+          Authorization: this.tokenAutenticacion.token,
+        },
+        body: soapEnvelope,
+      })
+
+      const respuestaXML = await response.text()
+
+      // 3. Validar CodEstatus
+      const parser = new DOMParser()
+      const doc = parser.parseFromString(respuestaXML, "text/xml")
+      const nodos = Array.from(doc.getElementsByTagName("*"))
+      const codEstatus = nodos.find((n) => n.localName.toLowerCase() === "codestatus")?.textContent?.trim()
+      if (codEstatus !== "5000") {
+        throw new Error(`Error en la descarga: CodEstatus ${codEstatus ?? "desconocido"}`)
+      }
+
+      // 4. Decodificar contenido base64 del ZIP y retornarlo como Buffer
+      const paqueteBase64 = nodos.find((n) => n.localName.toLowerCase() === "paquete")?.textContent?.trim() ?? ""
+      return Buffer.from(paqueteBase64, "base64")
     } catch (error) {
       console.error("Error al descargar paquete:", error)
       throw new Error(`Error al descargar paquete: ${error instanceof Error ? error.message : String(error)}`)
