@@ -3,6 +3,10 @@
  * Basado en la documentación oficial del SAT (Diciembre 2023, Versión 1.2)
  */
 
+import { readFile } from "fs/promises"
+import { createSign } from "crypto"
+import { DOMParser } from "@xmldom/xmldom"
+
 // Tipos para la autenticación
 interface TokenAutenticacion {
   token: string
@@ -54,6 +58,15 @@ export class SATDescargaMasiva {
     this.llavePrivadaPath = llavePrivadaPath
     this.passwordLlave = passwordLlave
     this.rfc = rfc
+  }
+
+  private async firmarXML(xml: string): Promise<string> {
+    const llavePrivada = await readFile(this.llavePrivadaPath, "utf8")
+    const signer = createSign("RSA-SHA256")
+    signer.update(xml)
+    signer.end()
+    const firma = signer.sign({ key: llavePrivada, passphrase: this.passwordLlave }, "base64")
+    return xml.replace("</soap:Body>", `<Signature>${firma}</Signature></soap:Body>`)
   }
 
   /**
@@ -169,7 +182,7 @@ export class SATDescargaMasiva {
     fechaFinal: string,
     tipoSolicitud: "CFDI" | "Metadata",
     rfcEmisor?: string,
-  ): Promise<string> {
+  ): Promise<{ idSolicitud: string; codEstatus: string }> {
     try {
       // Verificar si tenemos un token válido
       if (!this.tokenAutenticacion || this.tokenAutenticacion.vigencia < new Date()) {
@@ -177,18 +190,40 @@ export class SATDescargaMasiva {
       }
 
       console.log(`Creando solicitud de ${tipoSolicitud} del ${fechaInicial} al ${fechaFinal}`)
+      const solicitud = `<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:des="http://descargamasiva.sat.gob.mx">
+  <soap:Header/>
+  <soap:Body>
+    <des:SolicitaDescarga>
+      <des:solicitud FechaInicial="${fechaInicial}" FechaFinal="${fechaFinal}" TipoSolicitud="${tipoSolicitud}" RfcEmisor="${rfcEmisor ?? ""}" RfcReceptor="${this.rfc}" />
+    </des:SolicitaDescarga>
+  </soap:Body>
+</soap:Envelope>`
 
-      // Aquí iría la lógica para:
-      // 1. Generar la petición SOAP para crear la solicitud
-      // 2. Incluir el token de autenticación en el header
-      // 3. Firmar la petición con la e.firma
-      // 4. Enviar la petición al servicio de solicitud
-      // 5. Procesar la respuesta y extraer el ID de la solicitud
+      const xmlFirmado = await this.firmarXML(solicitud)
 
-      // Simulación de respuesta exitosa
-      const idSolicitud = `${Date.now()}-${Math.floor(Math.random() * 1000)}`
+        const tokenHeader = this.tokenAutenticacion.token.includes("=")
+          ? this.tokenAutenticacion.token.replace("=", '="') + '"'
+          : `WRAP access_token="${this.tokenAutenticacion.token}"`
+
+      const response = await fetch(this.URL_SOLICITUD, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/xml",
+          Authorization: tokenHeader.trim(),
+        },
+        body: xmlFirmado,
+      })
+
+      const respuestaTexto = await response.text()
+      const xmlRespuesta = new DOMParser().parseFromString(respuestaTexto, "text/xml")
+      const idSolicitud =
+        xmlRespuesta.getElementsByTagName("IdSolicitud")[0]?.textContent ?? ""
+      const codEstatus =
+        xmlRespuesta.getElementsByTagName("CodEstatus")[0]?.textContent ?? ""
+
       console.log(`Solicitud creada con ID: ${idSolicitud}`)
-      return idSolicitud
+      return { idSolicitud, codEstatus }
     } catch (error) {
       console.error("Error al crear solicitud:", error)
       throw new Error(`Error al crear solicitud: ${error instanceof Error ? error.message : String(error)}`)

@@ -39,8 +39,13 @@ export async function POST(request: NextRequest) {
         if (!fechaInicial || !fechaFinal || !tipoSolicitud) {
           return NextResponse.json({ error: "Parámetros de solicitud incompletos" }, { status: 400 })
         }
-        const idSolicitudNueva = await satClient.crearSolicitud(fechaInicial, fechaFinal, tipoSolicitud, rfcEmisor)
-        return NextResponse.json({ idSolicitud: idSolicitudNueva })
+        const { idSolicitud: idSolicitudNueva, codEstatus } = await satClient.crearSolicitud(
+          fechaInicial,
+          fechaFinal,
+          tipoSolicitud,
+          rfcEmisor,
+        )
+        return NextResponse.json({ idSolicitud: idSolicitudNueva, codEstatus })
 
       case "verificarSolicitud":
         if (!idSolicitud) {
