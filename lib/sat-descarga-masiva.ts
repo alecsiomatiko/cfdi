@@ -3,6 +3,10 @@
  * Basado en la documentación oficial del SAT (Diciembre 2023, Versión 1.2)
  */
 
+import fs from "fs"
+import crypto from "crypto"
+import { DOMParser } from "@xmldom/xmldom"
+
 // Tipos para la autenticación
 interface TokenAutenticacion {
   token: string
@@ -57,6 +61,18 @@ export class SATDescargaMasiva {
   }
 
   /**
+   * Genera la firma digital de un fragmento XML usando la e.firma
+   * @param xmlContenido Contenido XML a firmar
+   * @returns Firma en formato base64
+   */
+  private generarFirma(xmlContenido: string): string {
+    const key = fs.readFileSync(this.llavePrivadaPath)
+    const sign = crypto.createSign("RSA-SHA256")
+    sign.update(xmlContenido)
+    return sign.sign({ key, passphrase: this.passwordLlave }, "base64")
+  }
+
+  /**
    * Autentica con el SAT usando el certificado de e.firma
    * @returns Token de autenticación
    */
@@ -98,25 +114,60 @@ export class SATDescargaMasiva {
 
       console.log(`Verificando solicitud: ${idSolicitud}`)
 
-      // Aquí iría la lógica para:
-      // 1. Generar la petición SOAP para verificar la solicitud
-      // 2. Incluir el token de autenticación en el header
-      // 3. Firmar la petición con la e.firma
-      // 4. Enviar la petición al servicio de verificación
-      // 5. Procesar la respuesta
+      // 1. Construir la petición SOAP
+      const cuerpo = `<des:VerificaSolicitudDescargaRequest xmlns:des="http://DescargaMasivaTerceros.sat.gob.mx">\n` +
+        `  <des:IdSolicitud>${idSolicitud}</des:IdSolicitud>\n` +
+        `  <des:RfcSolicitante>${this.rfc}</des:RfcSolicitante>\n` +
+        `</des:VerificaSolicitudDescargaRequest>`
 
-      // Simulación de respuesta exitosa
+      // 2. Firmar la solicitud con la e.firma
+      const firma = this.generarFirma(cuerpo)
+      const soapEnvelope =
+        `<?xml version="1.0" encoding="UTF-8"?>\n` +
+        `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ds="http://www.w3.org/2000/09/xmldsig#">\n` +
+        `  <soap:Header/>\n` +
+        `  <soap:Body>\n` +
+        `    ${cuerpo}\n` +
+        `    <ds:Signature>${firma}</ds:Signature>\n` +
+        `  </soap:Body>\n` +
+        `</soap:Envelope>`
+
+      // 3. Enviar la petición al servicio de verificación
+      const response = await fetch(this.URL_VERIFICACION, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/xml; charset=utf-8",
+          Authorization: this.tokenAutenticacion.token,
+        },
+        body: soapEnvelope,
+      })
+
+      // 4. Parsear la respuesta
+      const respuestaTexto = await response.text()
+      const doc = new DOMParser().parseFromString(respuestaTexto, "text/xml")
+      const estadoTexto = doc.getElementsByTagName("EstadoSolicitud")[0]?.textContent ?? "0"
+      const mensaje = doc.getElementsByTagName("Mensaje")[0]?.textContent ?? ""
+      const paquetes: string[] = []
+      const paquetesNodo = doc.getElementsByTagName("IdsPaquetes")[0]
+      if (paquetesNodo) {
+        const lista = paquetesNodo.getElementsByTagName("string")
+        for (let i = 0; i < lista.length; i++) {
+          const valor = lista[i].textContent
+          if (valor) paquetes.push(valor)
+        }
+      }
+
+      // 5. Devolver un SolicitudDescarga con los datos obtenidos
       const solicitud: SolicitudDescarga = {
         id: idSolicitud,
         fechaSolicitud: new Date(),
         tipoSolicitud: "CFDI",
-        fechaInicial: "2023-01-01",
-        fechaFinal: "2023-01-31",
-        rfcEmisor: undefined,
+        fechaInicial: "",
+        fechaFinal: "",
         rfcReceptor: this.rfc,
-        estatus: EstadoSolicitud.Terminada,
-        mensaje: "Solicitud Aceptada",
-        paquetes: [`${idSolicitud}_01`, `${idSolicitud}_02`, `${idSolicitud}_03`],
+        estatus: Number(estadoTexto) as EstadoSolicitud,
+        mensaje,
+        paquetes,
       }
 
       console.log(`Verificación exitosa. Estado: ${solicitud.estatus}`)
