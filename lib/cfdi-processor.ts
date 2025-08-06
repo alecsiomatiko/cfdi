@@ -112,7 +112,7 @@ interface TrasladoDRData {
 }
 
 // Modificar la función clasificarXML para identificar correctamente los complementos de pago emitidos y recibidos
-function clasificarXML(xmlDoc: Document, rfcReceptor: string): TipoDocumento {
+function clasificarXML(xmlDoc: Document, rfcReceptor?: string): TipoDocumento {
   try {
     const comprobante = xmlDoc.getElementsByTagName("cfdi:Comprobante")[0]
     if (!comprobante) return "Desconocido"
@@ -124,6 +124,10 @@ function clasificarXML(xmlDoc: Document, rfcReceptor: string): TipoDocumento {
     const pagosNode10 = xmlDoc.getElementsByTagNameNS("http://www.sat.gob.mx/Pagos", "Pagos")[0]
 
     if (pagosNode20 || pagosNode10 || tipoComprobante === "P") {
+      if (!rfcReceptor) {
+        return "ComplementoPagoRecibido"
+      }
+
       // Obtener el RFC del emisor y receptor del XML
       const emisor = xmlDoc.getElementsByTagName("cfdi:Emisor")[0]
       const receptor = xmlDoc.getElementsByTagName("cfdi:Receptor")[0]
@@ -144,6 +148,10 @@ function clasificarXML(xmlDoc: Document, rfcReceptor: string): TipoDocumento {
 
       // Si no podemos determinar, asumimos que es un complemento de pago recibido
       return "ComplementoPagoRecibido"
+    }
+
+    if (!rfcReceptor) {
+      return "Desconocido"
     }
 
     // Obtener el RFC del receptor del XML
@@ -170,7 +178,7 @@ function clasificarXML(xmlDoc: Document, rfcReceptor: string): TipoDocumento {
 }
 
 // Modificar la función processCFDI para incluir el RFC del receptor y soportar múltiples versiones
-export function processCFDI(xmlDoc: Document, rfcReceptor = "GOGR810728TV5"): CFDIData | null {
+export function processCFDI(xmlDoc: Document, rfcReceptor: string): CFDIData | null {
   try {
     // Verificar que sea un CFDI válido (aceptar 3.3 y 4.0)
     const comprobante = xmlDoc.getElementsByTagName("cfdi:Comprobante")[0]

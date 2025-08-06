@@ -1,5 +1,10 @@
-export async function processFiles(files: File[], progressCallback: (progress: number) => void): Promise<any[]> {
+export async function processFiles(
+  files: File[],
+  rfc: string,
+  progressCallback: (progress: number) => void,
+): Promise<any[]> {
   const formData = new FormData()
+  formData.append("rfc", rfc)
 
   files.forEach((file, index) => {
     formData.append(`files`, file)
